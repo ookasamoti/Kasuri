@@ -1,0 +1,264 @@
+package com.ookasamoti.kasuri.item;
+
+import com.google.common.base.Suppliers;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.data.BlockFamilies;
+import net.minecraft.data.BlockFamily;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.level.block.BasePressurePlateBlock;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ButtonBlock;
+import net.minecraft.world.level.block.CarpetBlock;
+import net.minecraft.world.level.block.FenceBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.IronBarsBlock;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
+import net.minecraft.world.level.block.WallBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.Property;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Server side logic of the Block Brush: swaps a block for another one while keeping its shape and state.
+ */
+public final class BlockBrushPainter {
+	/**
+	 * Block shapes that may only be swapped for a block of the same shape (stairs for stairs, slab for slab, ...),
+	 * with the id suffix blocks of that shape usually have.
+	 */
+	private static final Map<Class<? extends Block>, String> VARIANT_SHAPES = Map.of(
+		StairBlock.class, "stairs",
+		SlabBlock.class, "slab",
+		WallBlock.class, "wall",
+		FenceBlock.class, "fence",
+		FenceGateBlock.class, "fence_gate",
+		TrapDoorBlock.class, "trapdoor",
+		BasePressurePlateBlock.class, "pressure_plate",
+		ButtonBlock.class, "button",
+		IronBarsBlock.class, "pane",
+		CarpetBlock.class, "carpet"
+	);
+
+	/**
+	 * Id suffixes of base blocks that their variants drop (oak_planks -> oak_stairs, white_wool -> white_carpet).
+	 */
+	private static final List<String> BASE_SUFFIXES = List.of("_planks", "_wool", "_block");
+
+	/**
+	 * Shaped variants of vanilla block families mapped to their base block (oak_stairs -> oak_planks).
+	 */
+	private static final Supplier<Map<Block, Block>> VARIANT_BASES = Suppliers.memoize(() -> {
+		Map<Block, Block> bases = new HashMap<>();
+		BlockFamilies.getAllFamilies().forEach(family -> family.getVariants().values().forEach(variant -> {
+			if (variantShape(variant) != null) {
+				bases.putIfAbsent(variant, family.getBaseBlock());
+			}
+		}));
+		return bases;
+	});
+
+	/**
+	 * The block replaced by each player's most recent off hand paint, used by left click.
+	 */
+	private static final Map<UUID, Block> LAST_REPLACED = new ConcurrentHashMap<>();
+
+	private BlockBrushPainter() {
+	}
+
+	public static void paint(final ServerPlayer player, final BlockPos pos, final boolean restore) {
+		if (!(player.getMainHandItem().getItem() instanceof BlockBrushItem) || !player.canUseGameMasterBlocks()) {
+			return;
+		}
+
+		ServerLevel level = player.level();
+		if (!level.isLoaded(pos) || !player.isWithinBlockInteractionRange(pos, 1.0) || !level.mayInteract(player, pos)) {
+			return;
+		}
+
+		Block source = restore ? LAST_REPLACED.get(player.getUUID()) : offhandBlock(player);
+		if (source == null) {
+			return;
+		}
+
+		BlockState target = level.getBlockState(pos);
+		BlockState replacement = createReplacement(target, source, restore);
+		if (replacement == null) {
+			return;
+		}
+
+		replacement = Block.updateFromNeighbourShapes(replacement, level, pos);
+		if (!level.setBlock(pos, replacement, Block.UPDATE_ALL)) {
+			return;
+		}
+
+		if (!restore) {
+			// Remember the material rather than the shape, so left click restores cherry stairs onto any shape as cherry
+			LAST_REPLACED.put(player.getUUID(), findBase(target.getBlock()));
+		}
+
+		SoundType soundType = replacement.getSoundType();
+		level.playSound(null, pos, soundType.getPlaceSound(), SoundSource.BLOCKS, (soundType.getVolume() + 1.0F) / 2.0F, soundType.getPitch() * 0.8F);
+	}
+
+	public static void forget(final ServerPlayer player) {
+		LAST_REPLACED.remove(player.getUUID());
+	}
+
+	private static @Nullable Block offhandBlock(final ServerPlayer player) {
+		return player.getOffhandItem().getItem() instanceof BlockItem blockItem ? blockItem.getBlock() : null;
+	}
+
+	/**
+	 * Returns the state {@code source} should take when it replaces {@code target}, or null if it may not replace it.
+	 *
+	 * @param keepShape whether a variant source may only replace the same variant, even on a full block target
+	 */
+	private static @Nullable BlockState createReplacement(final BlockState target, final Block source, final boolean keepShape) {
+		if (target.isAir() || isMultiBlock(target)) {
+			return null;
+		}
+
+		// A full block paints a variant target with its own variant of that shape (oak planks on stairs -> oak stairs)
+		Class<? extends Block> targetShape = variantShape(target.getBlock());
+		Class<? extends Block> sourceShape = variantShape(source);
+		if (keepShape && targetShape == null && sourceShape != null) {
+			return null;
+		}
+
+		Block block = targetShape == null || targetShape == sourceShape ? source : findVariant(source, targetShape);
+		if (block == null || block == target.getBlock() || isMultiBlock(block.defaultBlockState())) {
+			return null;
+		}
+
+		BlockState replacement = block.defaultBlockState();
+		for (Property<?> property : target.getProperties()) {
+			replacement = copyProperty(target, property, replacement);
+		}
+
+		return replacement;
+	}
+
+	private static @Nullable Class<? extends Block> variantShape(final Block block) {
+		for (Class<? extends Block> shape : VARIANT_SHAPES.keySet()) {
+			if (shape.isInstance(block)) {
+				return shape;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Finds the block of the given shape made from {@code base}, using vanilla block families first and falling back
+	 * to id naming conventions for blocks without a family (mostly modded ones).
+	 */
+	private static @Nullable Block findVariant(final Block base, final Class<? extends Block> shape) {
+		BlockFamily family = BlockFamilies.getFamily(base);
+		if (family != null) {
+			for (Block variant : family.getVariants().values()) {
+				if (shape.isInstance(variant)) {
+					return variant;
+				}
+			}
+		}
+
+		Identifier id = BuiltInRegistries.BLOCK.getKey(base);
+		String suffix = "_" + VARIANT_SHAPES.get(shape);
+		for (String name : baseNames(id.getPath())) {
+			Block variant = BuiltInRegistries.BLOCK.getValue(id.withPath(name + suffix));
+			if (shape.isInstance(variant)) {
+				return variant;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * The reverse of {@link #findVariant}: returns the base block {@code block} is a variant of (cherry stairs ->
+	 * cherry planks), or {@code block} itself when it is not a variant or its base cannot be found.
+	 */
+	private static Block findBase(final Block block) {
+		Class<? extends Block> shape = variantShape(block);
+		if (shape == null) {
+			return block;
+		}
+
+		Block base = VARIANT_BASES.get().get(block);
+		if (base != null) {
+			return base;
+		}
+
+		Identifier id = BuiltInRegistries.BLOCK.getKey(block);
+		String suffix = "_" + VARIANT_SHAPES.get(shape);
+		if (id.getPath().endsWith(suffix)) {
+			String name = id.getPath().substring(0, id.getPath().length() - suffix.length());
+			List<String> candidates = new ArrayList<>(List.of(name, name + "s"));
+			for (String baseSuffix : BASE_SUFFIXES) {
+				candidates.add(name + baseSuffix);
+			}
+
+			for (String candidate : candidates) {
+				Block candidateBlock = BuiltInRegistries.BLOCK.getValue(id.withPath(candidate));
+				// Only accept it if it really leads back here, which also rules out air for missing ids
+				if (variantShape(candidateBlock) == null && findVariant(candidateBlock, shape) == block) {
+					return candidateBlock;
+				}
+			}
+		}
+
+		return block;
+	}
+
+	private static List<String> baseNames(final String path) {
+		List<String> names = new ArrayList<>(List.of(path));
+		for (String suffix : BASE_SUFFIXES) {
+			if (path.endsWith(suffix)) {
+				names.add(path.substring(0, path.length() - suffix.length()));
+			}
+		}
+
+		// stone_bricks -> stone_brick_stairs
+		if (path.endsWith("s")) {
+			names.add(path.substring(0, path.length() - 1));
+		}
+
+		return names;
+	}
+
+	/**
+	 * Doors, beds, tall plants and the like span several blocks, and swapping only one part of them would break them.
+	 */
+	private static boolean isMultiBlock(final BlockState state) {
+		return state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF) || state.hasProperty(BlockStateProperties.BED_PART);
+	}
+
+	/**
+	 * Copies the value of {@code property} (facing, type, waterlogged, ...) to a property of the same name, when the
+	 * replacement has one that accepts the value.
+	 */
+	private static <T extends Comparable<T>> BlockState copyProperty(final BlockState from, final Property<T> property, final BlockState to) {
+		Property<?> targetProperty = to.getBlock().getStateDefinition().getProperty(property.getName());
+		return targetProperty == null ? to : withValue(to, targetProperty, property.getName(from.getValue(property)));
+	}
+
+	private static <T extends Comparable<T>> BlockState withValue(final BlockState state, final Property<T> property, final String valueName) {
+		return property.getValue(valueName).map(value -> state.setValue(property, value)).orElse(state);
+	}
+}

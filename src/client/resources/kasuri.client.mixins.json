@@ -1,9 +1,9 @@
 {
 	"required": true,
-	"package": "com.example.mixin",
+	"package": "com.ookasamoti.kasuri.client.mixin",
 	"compatibilityLevel": "JAVA_25",
-	"mixins": [
-		"ExampleMixin"
+	"client": [
+		"MinecraftMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
