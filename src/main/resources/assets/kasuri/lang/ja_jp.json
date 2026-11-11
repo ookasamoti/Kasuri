@@ -1,3 +1,6 @@
 {
-  "item.kasuri.block_brush": "ブロックブラシ"
+  "item.kasuri.block_brush": "ブロックブラシ",
+  "item.kasuri.block_brush.palette_full": "ブロックブラシのパレットが満杯です",
+  "key.category.kasuri.block_brush": "ブロックブラシ",
+  "key.kasuri.block_brush_palette": "パレット (+右クリック/ホイール)"
 }

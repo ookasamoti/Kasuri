@@ -12,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Replaces vanilla use/attack handling while the Block Brush is in the main hand, so that right click does not
- * place the off hand block or open containers, and left click does not break blocks.
+ * Replaces vanilla use/attack/pick handling while the Block Brush is in the main hand, so that right click does not
+ * place blocks or open containers, left click does not break blocks and pick block edits the palette instead.
  */
 @Mixin(Minecraft.class)
 public abstract class MinecraftMixin {
@@ -22,9 +22,9 @@ public abstract class MinecraftMixin {
 
 	// Called on click and, since the cancel skips setting rightClickDelay, every tick while use is held
 	@Inject(method = "startUseItem", at = @At("HEAD"), cancellable = true)
-	private void kasuri$paintWithOffhand(CallbackInfo ci) {
+	private void kasuri$useBrush(CallbackInfo ci) {
 		if (BlockBrushClient.isHoldingBrush(this.player)) {
-			BlockBrushClient.paint((Minecraft) (Object) this, false);
+			BlockBrushClient.use((Minecraft) (Object) this);
 			ci.cancel();
 		}
 	}
@@ -32,7 +32,7 @@ public abstract class MinecraftMixin {
 	@Inject(method = "startAttack", at = @At("HEAD"), cancellable = true)
 	private void kasuri$restoreOnClick(CallbackInfoReturnable<Boolean> cir) {
 		if (BlockBrushClient.isHoldingBrush(this.player)) {
-			BlockBrushClient.paint((Minecraft) (Object) this, true);
+			BlockBrushClient.attack((Minecraft) (Object) this);
 			cir.setReturnValue(false);
 		}
 	}
@@ -42,9 +42,17 @@ public abstract class MinecraftMixin {
 	private void kasuri$restoreWhileHeld(boolean down, CallbackInfo ci) {
 		if (BlockBrushClient.isHoldingBrush(this.player)) {
 			if (down) {
-				BlockBrushClient.paint((Minecraft) (Object) this, true);
+				BlockBrushClient.attack((Minecraft) (Object) this);
 			}
 
+			ci.cancel();
+		}
+	}
+
+	@Inject(method = "pickBlockOrEntity", at = @At("HEAD"), cancellable = true)
+	private void kasuri$pickIntoPalette(CallbackInfo ci) {
+		if (BlockBrushClient.isHoldingBrush(this.player)) {
+			BlockBrushClient.pick((Minecraft) (Object) this);
 			ci.cancel();
 		}
 	}

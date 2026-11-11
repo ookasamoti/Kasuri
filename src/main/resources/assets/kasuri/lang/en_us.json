@@ -1,3 +1,6 @@
 {
-  "item.kasuri.block_brush": "Block Brush"
+  "item.kasuri.block_brush": "Block Brush",
+  "item.kasuri.block_brush.palette_full": "The Block Brush palette is full",
+  "key.category.kasuri.block_brush": "Block Brush",
+  "key.kasuri.block_brush_palette": "Palette (+ Right Click / Scroll)"
 }

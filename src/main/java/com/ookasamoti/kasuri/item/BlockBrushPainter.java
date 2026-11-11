@@ -8,15 +8,19 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import com.ookasamoti.kasuri.menu.BrushPaletteMenu;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.NonNullList;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.data.BlockFamilies;
 import net.minecraft.data.BlockFamily;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.SimpleMenuProvider;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ButtonBlock;
@@ -74,7 +78,7 @@ public final class BlockBrushPainter {
 	});
 
 	/**
-	 * The block replaced by each player's most recent off hand paint, used by left click.
+	 * The block replaced by each player's most recent palette paint, used by left click.
 	 */
 	private static final Map<UUID, Block> LAST_REPLACED = new ConcurrentHashMap<>();
 
@@ -82,16 +86,13 @@ public final class BlockBrushPainter {
 	}
 
 	public static void paint(final ServerPlayer player, final BlockPos pos, final boolean restore) {
-		if (!(player.getMainHandItem().getItem() instanceof BlockBrushItem) || !player.canUseGameMasterBlocks()) {
+		ItemStack brush = heldBrush(player);
+		if (brush == null || !canReach(player, pos)) {
 			return;
 		}
 
 		ServerLevel level = player.level();
-		if (!level.isLoaded(pos) || !player.isWithinBlockInteractionRange(pos, 1.0) || !level.mayInteract(player, pos)) {
-			return;
-		}
-
-		Block source = restore ? LAST_REPLACED.get(player.getUUID()) : offhandBlock(player);
+		Block source = restore ? LAST_REPLACED.get(player.getUUID()) : BrushPalette.of(brush).selectedBlock();
 		if (source == null) {
 			return;
 		}
@@ -120,8 +121,76 @@ public final class BlockBrushPainter {
 		LAST_REPLACED.remove(player.getUUID());
 	}
 
-	private static @Nullable Block offhandBlock(final ServerPlayer player) {
-		return player.getOffhandItem().getItem() instanceof BlockItem blockItem ? blockItem.getBlock() : null;
+	public static void openPalette(final ServerPlayer player) {
+		ItemStack brush = heldBrush(player);
+		if (brush != null) {
+			player.openMenu(new SimpleMenuProvider((containerId, inventory, p) -> new BrushPaletteMenu(containerId, inventory, brush), brush.getHoverName()));
+		}
+	}
+
+	public static void cyclePalette(final ServerPlayer player, final int direction) {
+		ItemStack brush = heldBrush(player);
+		if (brush == null) {
+			return;
+		}
+
+		BrushPalette palette = BrushPalette.of(brush).cycle(Integer.signum(direction));
+		brush.set(ModDataComponents.BRUSH_PALETTE, palette);
+		showSelected(player, palette);
+	}
+
+	/**
+	 * Selects the block at {@code pos} in the palette, appending it when it is not there yet. Like left click it
+	 * goes by material, so picking cherry stairs selects cherry planks.
+	 */
+	public static void pick(final ServerPlayer player, final BlockPos pos) {
+		ItemStack brush = heldBrush(player);
+		if (brush == null || !canReach(player, pos)) {
+			return;
+		}
+
+		ItemStack entry = BrushPalette.entry(findBase(player.level().getBlockState(pos).getBlock()).asItem());
+		if (!BrushPalette.accepts(entry)) {
+			return;
+		}
+
+		BrushPalette palette = BrushPalette.of(brush);
+		int slot = palette.indexOf(entry.getItem());
+		if (slot < 0) {
+			slot = palette.appendSlot();
+			if (slot < 0) {
+				player.sendOverlayMessage(Component.translatable("item.kasuri.block_brush.palette_full"));
+				return;
+			}
+
+			NonNullList<ItemStack> items = palette.items();
+			items.set(slot, entry);
+			palette = palette.withItems(items);
+		}
+
+		palette = palette.withSelected(slot);
+		brush.set(ModDataComponents.BRUSH_PALETTE, palette);
+		showSelected(player, palette);
+	}
+
+	private static void showSelected(final ServerPlayer player, final BrushPalette palette) {
+		ItemStack selected = palette.selectedItem();
+		if (!selected.isEmpty()) {
+			player.sendOverlayMessage(selected.getHoverName());
+		}
+	}
+
+	/**
+	 * Returns the Block Brush in the player's main hand, or null when there is none or the player may not use it.
+	 */
+	private static @Nullable ItemStack heldBrush(final ServerPlayer player) {
+		ItemStack stack = player.getMainHandItem();
+		return stack.getItem() instanceof BlockBrushItem && player.canUseGameMasterBlocks() ? stack : null;
+	}
+
+	private static boolean canReach(final ServerPlayer player, final BlockPos pos) {
+		ServerLevel level = player.level();
+		return level.isLoaded(pos) && player.isWithinBlockInteractionRange(pos, 1.0) && level.mayInteract(player, pos);
 	}
 
 	/**
