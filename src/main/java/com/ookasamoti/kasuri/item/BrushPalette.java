@@ -39,7 +39,7 @@ public record BrushPalette(ItemContainerContents contents, int selected) {
 	 * Whether {@code stack} can be put in the palette.
 	 */
 	public static boolean accepts(final ItemStack stack) {
-		return stack.getItem() instanceof BlockItem && !(stack.getItem() instanceof BlockBrushItem);
+		return stack.getItem() instanceof BlockItem && !(stack.getItem() instanceof PaletteToolItem);
 	}
 
 	/**

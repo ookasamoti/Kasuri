@@ -1,7 +1,7 @@
 package com.ookasamoti.kasuri.client.mixin;
 
-import com.ookasamoti.kasuri.item.BlockBrushItem;
 import com.ookasamoti.kasuri.item.BrushPalette;
+import com.ookasamoti.kasuri.item.PaletteToolItem;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.world.item.ItemStack;
@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Draws the Block Brush's selected palette block at half size in the bottom left corner of the brush's slot.
+ * Draws the selected palette block of the Block Brush or Block Box at half size in the bottom left corner of the brush's slot.
  */
 @Mixin(GuiGraphicsExtractor.class)
 public abstract class GuiGraphicsExtractorMixin {
@@ -26,7 +26,7 @@ public abstract class GuiGraphicsExtractorMixin {
 
 	@Inject(method = "itemDecorations(Lnet/minecraft/client/gui/Font;Lnet/minecraft/world/item/ItemStack;IILjava/lang/String;)V", at = @At("TAIL"))
 	private void kasuri$drawSelectedBlock(Font font, ItemStack itemStack, int x, int y, @Nullable String countText, CallbackInfo ci) {
-		if (!(itemStack.getItem() instanceof BlockBrushItem)) {
+		if (!(itemStack.getItem() instanceof PaletteToolItem)) {
 			return;
 		}
 

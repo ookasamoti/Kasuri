@@ -15,12 +15,16 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.data.BlockFamilies;
 import net.minecraft.data.BlockFamily;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.SimpleMenuProvider;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ButtonBlock;
@@ -36,10 +40,12 @@ import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.phys.BlockHitResult;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Server side logic of the Block Brush: swaps a block for another one while keeping its shape and state.
+ * Server side logic of the Block Brush, which swaps a block for another one while keeping its shape and state, and
+ * of the Block Box, which places blocks. Both share the palette handling.
  */
 public final class BlockBrushPainter {
 	/**
@@ -122,14 +128,14 @@ public final class BlockBrushPainter {
 	}
 
 	public static void openPalette(final ServerPlayer player) {
-		ItemStack brush = heldBrush(player);
+		ItemStack brush = heldTool(player);
 		if (brush != null) {
 			player.openMenu(new SimpleMenuProvider((containerId, inventory, p) -> new BrushPaletteMenu(containerId, inventory, brush), brush.getHoverName()));
 		}
 	}
 
 	public static void cyclePalette(final ServerPlayer player, final int direction) {
-		ItemStack brush = heldBrush(player);
+		ItemStack brush = heldTool(player);
 		if (brush == null) {
 			return;
 		}
@@ -144,7 +150,7 @@ public final class BlockBrushPainter {
 	 * goes by material, so picking cherry stairs selects cherry planks.
 	 */
 	public static void pick(final ServerPlayer player, final BlockPos pos) {
-		ItemStack brush = heldBrush(player);
+		ItemStack brush = heldTool(player);
 		if (brush == null || !canReach(player, pos)) {
 			return;
 		}
@@ -181,11 +187,51 @@ public final class BlockBrushPainter {
 	}
 
 	/**
+	 * Places the Block Box's selected block against the clicked face, the same way using the block item would.
+	 */
+	public static void place(final ServerPlayer player, final BlockHitResult hit) {
+		ItemStack box = heldTool(player);
+		if (!(box != null && box.getItem() instanceof BlockBoxItem) || !canReach(player, hit.getBlockPos())) {
+			return;
+		}
+
+		// A fresh stack each time, so nothing is ever used up
+		ItemStack selected = BrushPalette.of(box).selectedItem();
+		if (!(selected.getItem() instanceof BlockItem blockItem)) {
+			return;
+		}
+
+		BlockPlaceContext context = new BlockPlaceContext(player.level(), player, InteractionHand.MAIN_HAND, selected, hit);
+		if (!blockItem.place(context).consumesAction()) {
+			return;
+		}
+
+		// Vanilla leaves the place sound to the placing client, which knows nothing about this placement
+		BlockPos pos = context.getClickedPos();
+		BlockState placed = player.level().getBlockState(pos);
+		SoundType soundType = placed.getSoundType();
+		player.connection.send(new ClientboundSoundPacket(
+			BuiltInRegistries.SOUND_EVENT.wrapAsHolder(soundType.getPlaceSound()), SoundSource.BLOCKS,
+			pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
+			(soundType.getVolume() + 1.0F) / 2.0F, soundType.getPitch() * 0.8F, player.getRandom().nextLong()
+		));
+	}
+
+	/**
 	 * Returns the Block Brush in the player's main hand, or null when there is none or the player may not use it.
 	 */
 	private static @Nullable ItemStack heldBrush(final ServerPlayer player) {
+		ItemStack stack = heldTool(player);
+		return stack != null && stack.getItem() instanceof BlockBrushItem ? stack : null;
+	}
+
+	/**
+	 * Returns the palette tool (Block Brush or Block Box) in the player's main hand, or null when there is none or
+	 * the player may not use it.
+	 */
+	private static @Nullable ItemStack heldTool(final ServerPlayer player) {
 		ItemStack stack = player.getMainHandItem();
-		return stack.getItem() instanceof BlockBrushItem && player.canUseGameMasterBlocks() ? stack : null;
+		return stack.getItem() instanceof PaletteToolItem && player.canUseGameMasterBlocks() ? stack : null;
 	}
 
 	private static boolean canReach(final ServerPlayer player, final BlockPos pos) {

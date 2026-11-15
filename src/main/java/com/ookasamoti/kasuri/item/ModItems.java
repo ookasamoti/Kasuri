@@ -11,6 +11,7 @@ import net.minecraft.world.item.Rarity;
 
 public final class ModItems {
 	public static final Item BLOCK_BRUSH = register("block_brush", BlockBrushItem::new, new Item.Properties().stacksTo(1).rarity(Rarity.EPIC));
+	public static final Item BLOCK_BOX = register("block_box", BlockBoxItem::new, new Item.Properties().stacksTo(1).rarity(Rarity.EPIC));
 
 	private ModItems() {
 	}

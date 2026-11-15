@@ -11,7 +11,7 @@ import net.minecraft.world.level.block.state.BlockState;
  * Painting itself is driven by the client (see BlockBrushClient), which sends the hovered block to the server
  * every tick while a mouse button is held. The item only has to make sure vanilla never breaks blocks with it.
  */
-public class BlockBrushItem extends Item {
+public class BlockBrushItem extends PaletteToolItem {
 	public BlockBrushItem(final Item.Properties properties) {
 		super(properties);
 	}

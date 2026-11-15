@@ -12,8 +12,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Replaces vanilla use/attack/pick handling while the Block Brush is in the main hand, so that right click does not
- * place blocks or open containers, left click does not break blocks and pick block edits the palette instead.
+ * Replaces vanilla use/pick handling while the Block Brush or Block Box is in the main hand, so that right click goes
+ * to the tool instead of placing blocks or opening containers and pick block edits the palette. Attack is only taken
+ * over for the Block Brush, whose left click restores instead of breaking; the Block Box breaks blocks as usual.
  */
 @Mixin(Minecraft.class)
 public abstract class MinecraftMixin {
@@ -23,7 +24,7 @@ public abstract class MinecraftMixin {
 	// Called on click and, since the cancel skips setting rightClickDelay, every tick while use is held
 	@Inject(method = "startUseItem", at = @At("HEAD"), cancellable = true)
 	private void kasuri$useBrush(CallbackInfo ci) {
-		if (BlockBrushClient.isHoldingBrush(this.player)) {
+		if (BlockBrushClient.isHoldingTool(this.player)) {
 			BlockBrushClient.use((Minecraft) (Object) this);
 			ci.cancel();
 		}
@@ -51,7 +52,7 @@ public abstract class MinecraftMixin {
 
 	@Inject(method = "pickBlockOrEntity", at = @At("HEAD"), cancellable = true)
 	private void kasuri$pickIntoPalette(CallbackInfo ci) {
-		if (BlockBrushClient.isHoldingBrush(this.player)) {
+		if (BlockBrushClient.isHoldingTool(this.player)) {
 			BlockBrushClient.pick((Minecraft) (Object) this);
 			ci.cancel();
 		}

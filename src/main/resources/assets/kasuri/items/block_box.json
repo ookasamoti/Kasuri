@@ -1,0 +1,10 @@
+{
+  "model": {
+    "type": "minecraft:special",
+    "base": "kasuri:item/block_box",
+    "model": {
+      "type": "minecraft:chest",
+      "texture": "kasuri:block_box"
+    }
+  }
+}

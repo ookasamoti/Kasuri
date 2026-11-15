@@ -4,6 +4,7 @@ import com.ookasamoti.kasuri.item.BlockBrushPainter;
 import com.ookasamoti.kasuri.item.ModDataComponents;
 import com.ookasamoti.kasuri.item.ModItems;
 import com.ookasamoti.kasuri.menu.ModMenus;
+import com.ookasamoti.kasuri.network.BoxPlacePayload;
 import com.ookasamoti.kasuri.network.BrushPaintPayload;
 import com.ookasamoti.kasuri.network.BrushPalettePayloads;
 import net.fabricmc.api.ModInitializer;
@@ -32,13 +33,17 @@ public class Kasuri implements ModInitializer {
 		CreativeModeTabEvents.modifyOutputEvent(CreativeModeTabs.OP_BLOCKS)
 			.register(output -> {
 				if (output.shouldShowOpRestrictedItems()) {
-					output.insertAfter(Items.DEBUG_STICK, ModItems.BLOCK_BRUSH);
+					output.insertAfter(Items.DEBUG_STICK, ModItems.BLOCK_BRUSH, ModItems.BLOCK_BOX);
 				}
 			});
 
 		PayloadTypeRegistry.serverboundPlay().register(BrushPaintPayload.TYPE, BrushPaintPayload.STREAM_CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(BrushPaintPayload.TYPE, (payload, context) ->
 			BlockBrushPainter.paint(context.player(), payload.pos(), payload.restore())
+		);
+		PayloadTypeRegistry.serverboundPlay().register(BoxPlacePayload.TYPE, BoxPlacePayload.STREAM_CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(BoxPlacePayload.TYPE, (payload, context) ->
+			BlockBrushPainter.place(context.player(), payload.hit())
 		);
 		PayloadTypeRegistry.serverboundPlay().register(BrushPalettePayloads.Open.TYPE, BrushPalettePayloads.Open.STREAM_CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(BrushPalettePayloads.Open.TYPE, (payload, context) ->
