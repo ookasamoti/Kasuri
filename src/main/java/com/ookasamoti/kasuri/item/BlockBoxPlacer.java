@@ -1,5 +1,6 @@
 package com.ookasamoti.kasuri.item;
 
+import com.ookasamoti.kasuri.Kasuri;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -7,6 +8,7 @@ import net.minecraft.core.FrontAndTop;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
@@ -56,6 +58,8 @@ final class BlockBoxPlacer {
 		"signal_fire", "hanging", "attached"
 	);
 
+	private static final Identifier PALETTE_BLOCK_MODEL = Kasuri.id("palette_block");
+
 	private BlockBoxPlacer() {
 	}
 
@@ -74,7 +78,7 @@ final class BlockBoxPlacer {
 		if (block.asItem() instanceof BlockItem item) {
 			ItemStack stack = BrushPalette.entry(item);
 			if (!kept.equals(normalize(block.defaultBlockState()))) {
-				stack.set(ModDataComponents.PALETTE_STATE, kept);
+				setState(stack, kept);
 			}
 
 			// Placing applies these to the new banner, just like a patterned banner item would
@@ -91,9 +95,18 @@ final class BlockBoxPlacer {
 		}
 
 		ItemStack stack = BrushPalette.entry(shown.getItem());
-		stack.set(ModDataComponents.PALETTE_STATE, kept);
+		setState(stack, kept);
 		stack.set(DataComponents.ITEM_NAME, block.getName());
 		return stack;
+	}
+
+	/**
+	 * Remembers {@code state} on the entry and has it drawn with the block's model (see BlockStateItemModel), since
+	 * the item alone would not show the difference.
+	 */
+	private static void setState(final ItemStack stack, final BlockState state) {
+		stack.set(ModDataComponents.PALETTE_STATE, state);
+		stack.set(DataComponents.ITEM_MODEL, PALETTE_BLOCK_MODEL);
 	}
 
 	/**
