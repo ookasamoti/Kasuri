@@ -39,7 +39,7 @@ public record BrushPalette(ItemContainerContents contents, int selected) {
 	 * Whether {@code stack} can be put in the palette.
 	 */
 	public static boolean accepts(final ItemStack stack) {
-		return stack.getItem() instanceof BlockItem && !(stack.getItem() instanceof PaletteToolItem);
+		return stack.has(ModDataComponents.PALETTE_STATE) || stack.getItem() instanceof BlockItem && !(stack.getItem() instanceof PaletteToolItem);
 	}
 
 	/**
@@ -87,12 +87,13 @@ public record BrushPalette(ItemContainerContents contents, int selected) {
 	}
 
 	/**
-	 * Returns the slot holding {@code item}, or -1.
+	 * Returns the slot holding {@code entry}, or -1. Entries of the same block with different remembered states
+	 * are different entries.
 	 */
-	public int indexOf(final Item item) {
+	public int indexOf(final ItemStack entry) {
 		NonNullList<ItemStack> items = this.items();
 		for (int slot = 0; slot < SIZE; slot++) {
-			if (items.get(slot).is(item)) {
+			if (ItemStack.isSameItemSameComponents(items.get(slot), entry)) {
 				return slot;
 			}
 		}

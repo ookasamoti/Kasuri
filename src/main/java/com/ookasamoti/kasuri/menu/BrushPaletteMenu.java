@@ -105,7 +105,7 @@ public class BrushPaletteMenu extends AbstractContainerMenu {
 	}
 
 	private int indexOf(final ItemStack stack) {
-		return BrushPalette.EMPTY.withItems(this.paletteItems()).indexOf(stack.getItem());
+		return BrushPalette.EMPTY.withItems(this.paletteItems()).indexOf(BrushPalette.entry(stack.getItem()));
 	}
 
 	private List<ItemStack> paletteItems() {
