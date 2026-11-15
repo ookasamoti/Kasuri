@@ -38,7 +38,9 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.ItemOwner;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.BlockItemStateProperties;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
@@ -83,9 +85,15 @@ public class BlockStateItemModel implements ItemModel {
 		BlockState state = item.get(ModDataComponents.PALETTE_STATE);
 		Baked baked = state == null ? null : this.byState.computeIfAbsent(state, BlockStateItemModel::bakeState);
 		if (baked == null || baked.isEmpty()) {
-			// Blocks drawn by a block entity renderer have no quads, so show the entry's item as usual instead
+			// Blocks drawn by a block entity renderer have no quads, so show the entry's item as usual instead. Item
+			// models may still select on the state (the copper golem statue's pose), so hand it over as the
+			// block_state component; this copy is only drawn, never placed.
 			ItemStack plain = item.copy();
 			plain.set(DataComponents.ITEM_MODEL, item.getItem().components().get(DataComponents.ITEM_MODEL));
+			if (state != null) {
+				plain.set(DataComponents.BLOCK_STATE, stateProperties(state));
+			}
+
 			resolver.appendItemLayers(output, plain, displayContext, level, owner, seed);
 			return;
 		}
@@ -108,6 +116,19 @@ public class BlockStateItemModel implements ItemModel {
 		if (baked.model().hasMaterialFlag(BakedQuad.FLAG_ANIMATED)) {
 			output.setAnimated();
 		}
+	}
+
+	private static BlockItemStateProperties stateProperties(final BlockState state) {
+		Map<String, String> properties = new HashMap<>();
+		for (Property<?> property : state.getProperties()) {
+			properties.put(property.getName(), valueName(state, property));
+		}
+
+		return new BlockItemStateProperties(properties);
+	}
+
+	private static <T extends Comparable<T>> String valueName(final BlockState state, final Property<T> property) {
+		return property.getName(state.getValue(property));
 	}
 
 	private ItemStackRenderState.LayerRenderState newLayer(final ItemStackRenderState output, final Baked baked, final ItemDisplayContext displayContext) {
