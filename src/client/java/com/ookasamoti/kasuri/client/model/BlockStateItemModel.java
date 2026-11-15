@@ -4,11 +4,18 @@ import com.mojang.serialization.MapCodec;
 import com.ookasamoti.kasuri.item.ModDataComponents;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.function.Consumer;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import com.google.common.base.Suppliers;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.model.geom.builders.UVPair;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.special.SpecialModelRenderer;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.color.block.BlockTintSource;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -34,6 +41,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
+import org.joml.Vector3f;
 import org.joml.Vector3fc;
 import org.jspecify.annotations.Nullable;
 
@@ -74,7 +82,7 @@ public class BlockStateItemModel implements ItemModel {
 	) {
 		BlockState state = item.get(ModDataComponents.PALETTE_STATE);
 		Baked baked = state == null ? null : this.byState.computeIfAbsent(state, BlockStateItemModel::bakeState);
-		if (baked == null || baked.quads().isEmpty()) {
+		if (baked == null || baked.isEmpty()) {
 			// Blocks drawn by a block entity renderer have no quads, so show the entry's item as usual instead
 			ItemStack plain = item.copy();
 			plain.set(DataComponents.ITEM_MODEL, item.getItem().components().get(DataComponents.ITEM_MODEL));
@@ -84,17 +92,32 @@ public class BlockStateItemModel implements ItemModel {
 
 		output.appendModelIdentityElement(this);
 		output.appendModelIdentityElement(state);
+		if (!baked.quads().isEmpty()) {
+			ItemStackRenderState.LayerRenderState layer = this.newLayer(output, baked, displayContext);
+			for (int tint : baked.tints()) {
+				layer.tintLayers().add(tint);
+			}
+
+			layer.setQuads(baked.quads());
+		}
+
+		if (!baked.shaded().quads().isEmpty()) {
+			this.newLayer(output, baked, displayContext).setupSpecialModel(ShadedQuadRenderer.INSTANCE, baked.shaded());
+		}
+
+		if (baked.model().hasMaterialFlag(BakedQuad.FLAG_ANIMATED)) {
+			output.setAnimated();
+		}
+	}
+
+	private ItemStackRenderState.LayerRenderState newLayer(final ItemStackRenderState output, final Baked baked, final ItemDisplayContext displayContext) {
 		ItemStackRenderState.LayerRenderState layer = output.newLayer();
-		layer.tintLayers().addAll(baked.tints());
 		layer.setExtents(baked.extents());
 		layer.setLocalTransform(this.transformation);
 		layer.setUsesBlockLight(this.usesBlockLight);
 		layer.setParticleMaterial(baked.model().particleMaterial());
 		layer.setItemTransform(this.transforms.getTransform(displayContext));
-		layer.setQuads(baked.quads());
-		if (baked.model().hasMaterialFlag(BakedQuad.FLAG_ANIMATED)) {
-			output.setAnimated();
-		}
+		return layer;
 	}
 
 	private static Baked bakeState(final BlockState state) {
@@ -103,12 +126,15 @@ public class BlockStateItemModel implements ItemModel {
 		List<BlockStateModelPart> parts = new ArrayList<>();
 		model.collectParts(RandomSource.create(42L), parts);
 
-		List<BakedQuad> quads = new ArrayList<>();
+		List<BakedQuad> all = new ArrayList<>();
+		List<BakedQuad> plain = new ArrayList<>();
+		List<BakedQuad> shaded = new ArrayList<>();
 		int maxTint = -1;
 		for (BlockStateModelPart part : parts) {
 			for (Direction direction : QUAD_DIRECTIONS) {
 				for (BakedQuad quad : part.getQuads(direction)) {
-					quads.add(withItemShading(quad));
+					all.add(quad);
+					(shadeDirection(quad) == null ? plain : shaded).add(quad);
 					maxTint = Math.max(maxTint, quad.materialInfo().tintIndex());
 				}
 			}
@@ -116,35 +142,105 @@ public class BlockStateItemModel implements ItemModel {
 
 		// Item rendering looks tints up by layer, so give it the block's colors without a world position
 		BlockColors blockColors = minecraft.getBlockColors();
-		List<Integer> tints = new ArrayList<>();
+		int[] tints = new int[maxTint + 1];
 		for (int tintIndex = 0; tintIndex <= maxTint; tintIndex++) {
 			BlockTintSource source = blockColors.getTintSource(state, tintIndex);
-			tints.add(source == null ? -1 : ARGB.opaque(source.color(state)));
+			tints[tintIndex] = source == null ? -1 : ARGB.opaque(source.color(state));
 		}
 
-		List<BakedQuad> allQuads = List.copyOf(quads);
-		return new Baked(model, ItemQuads.split(allQuads), Suppliers.memoize(() -> CuboidItemModelWrapper.computeExtents(allQuads)), tints);
-	}
-
-	/**
-	 * Block rendering lights faces with a shade direction override (the crossed planes of a potted plant are lit as
-	 * if facing up) by that direction, but item rendering only looks at the face direction, which leaves the
-	 * diagonal planes dark. Face the quad that way instead so it is lit the same.
-	 */
-	private static BakedQuad withItemShading(final BakedQuad quad) {
-		Direction shade = quad.materialInfo().shadeDirectionOverride();
-		if (shade == null || shade == quad.direction()) {
-			return quad;
-		}
-
-		return new BakedQuad(
-			quad.position0(), quad.position1(), quad.position2(), quad.position3(),
-			quad.packedUV0(), quad.packedUV1(), quad.packedUV2(), quad.packedUV3(),
-			shade, quad.materialInfo()
+		List<BakedQuad> allQuads = List.copyOf(all);
+		return new Baked(
+			model, ItemQuads.split(plain), new ShadedQuads(List.copyOf(shaded), tints),
+			Suppliers.memoize(() -> CuboidItemModelWrapper.computeExtents(allQuads)), tints
 		);
 	}
 
-	private record Baked(BlockStateModel model, ItemQuads quads, Supplier<Vector3fc[]> extents, List<Integer> tints) {
+	/**
+	 * Returns the direction a quad should be lit as instead of its own, or null to light it normally. That is its
+	 * shade direction override, or up for faces at an angle, like the crossed planes of plants: some models (such
+	 * as the flower pots Sodium replaces) still mark those with the old "shade": false, which 26.3 no longer reads.
+	 */
+	private static @Nullable Direction shadeDirection(final BakedQuad quad) {
+		Direction override = quad.materialInfo().shadeDirectionOverride();
+		if (override != null) {
+			return override;
+		}
+
+		Vector3f normal = new Vector3f(quad.position(1)).sub(quad.position(0))
+			.cross(new Vector3f(quad.position(2)).sub(quad.position(0)));
+		if (normal.lengthSquared() < 1.0E-8F) {
+			return null;
+		}
+
+		normal.normalize();
+		float axisAligned = Math.max(Math.abs(normal.x()), Math.max(Math.abs(normal.y()), Math.abs(normal.z())));
+		return axisAligned > 0.999F ? null : Direction.UP;
+	}
+
+	private record Baked(BlockStateModel model, ItemQuads quads, ShadedQuads shaded, Supplier<Vector3fc[]> extents, int[] tints) {
+		boolean isEmpty() {
+			return this.quads.isEmpty() && this.shaded.quads().isEmpty();
+		}
+	}
+
+	/**
+	 * Faces lit by another direction than their own (see {@link #shadeDirection}), such as the crossed planes of a
+	 * potted plant, which the block renderer lights as if they faced up.
+	 */
+	private record ShadedQuads(List<BakedQuad> quads, int[] tints) {
+	}
+
+	/**
+	 * Draws {@link ShadedQuads} with their shade direction as the vertex normal. Item rendering otherwise lights a face by
+	 * its own direction (or, with Sodium, by its geometry), which leaves the diagonal planes dark.
+	 */
+	private static final class ShadedQuadRenderer implements SpecialModelRenderer<ShadedQuads> {
+		static final ShadedQuadRenderer INSTANCE = new ShadedQuadRenderer();
+
+		@Override
+		public void submit(
+			final @Nullable ShadedQuads argument,
+			final PoseStack poseStack,
+			final SubmitNodeCollector submitNodeCollector,
+			final int lightCoords,
+			final int overlayCoords,
+			final boolean hasFoil,
+			final int outlineColor
+		) {
+			if (argument == null) {
+				return;
+			}
+
+			Map<RenderType, List<BakedQuad>> byRenderType = new LinkedHashMap<>();
+			for (BakedQuad quad : argument.quads()) {
+				byRenderType.computeIfAbsent(quad.materialInfo().itemRenderType(), type -> new ArrayList<>()).add(quad);
+			}
+
+			byRenderType.forEach((renderType, quads) -> submitNodeCollector.submitCustomGeometry(poseStack, renderType, (pose, buffer) -> {
+				for (BakedQuad quad : quads) {
+					BakedQuad.MaterialInfo material = quad.materialInfo();
+					int color = material.isTinted() && material.tintIndex() < argument.tints().length ? argument.tints()[material.tintIndex()] : -1;
+					Vector3f normal = pose.transformNormal(shadeDirection(quad).getUnitVec3f(), new Vector3f());
+					for (int vertex = 0; vertex < 4; vertex++) {
+						Vector3f position = pose.pose().transformPosition(quad.position(vertex), new Vector3f());
+						long uv = quad.packedUV(vertex);
+						buffer.addVertex(
+							position.x(), position.y(), position.z(), color, UVPair.unpackU(uv), UVPair.unpackV(uv),
+							overlayCoords, lightCoords, normal.x(), normal.y(), normal.z()
+						);
+					}
+				}
+			}));
+		}
+
+		@Override
+		public void getExtents(final Consumer<Vector3fc> output) {
+		}
+
+		@Override
+		public @Nullable ShadedQuads extractArgument(final ItemStack stack) {
+			return null;
+		}
 	}
 
 	public record Unbaked() implements ItemModel.Unbaked {
