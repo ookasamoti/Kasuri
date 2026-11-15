@@ -17,6 +17,7 @@ import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.entity.BannerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BedPart;
@@ -60,7 +61,7 @@ final class BlockBoxPlacer {
 
 	/**
 	 * Creates the palette entry for picking {@code state}: the block's own item, remembering any state beyond its
-	 * orientation (an unlit campfire, three candles). Blocks without an item, like potted plants, are shown with
+	 * orientation (an unlit campfire, three candles) and a banner's patterns. Blocks without an item, like potted plants, are shown with
 	 * their pick block item and placed from the remembered state alone. Returns an empty stack when nothing fits.
 	 */
 	static ItemStack entry(final LevelReader level, final BlockPos pos, final BlockState state) {
@@ -74,6 +75,11 @@ final class BlockBoxPlacer {
 			ItemStack stack = BrushPalette.entry(item);
 			if (!kept.equals(normalize(block.defaultBlockState()))) {
 				stack.set(ModDataComponents.PALETTE_STATE, kept);
+			}
+
+			// Placing applies these to the new banner, just like a patterned banner item would
+			if (level.getBlockEntity(pos) instanceof BannerBlockEntity banner && !banner.getPatterns().layers().isEmpty()) {
+				stack.set(DataComponents.BANNER_PATTERNS, banner.getPatterns());
 			}
 
 			return stack;
